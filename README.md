@@ -135,6 +135,14 @@ This project demonstrates a modern engineering workflow using AI as a collaborat
 - Validated against Scrutiny web dashboard
 - Confirmed detection of known failing disk (Load_Cycle_Count exhaustion)
 
+**Phase 5: Production Validation**
+- Deployed on live 8-disk infrastructure
+- Discovered manufacturer-specific quirk (Seagate Exos)
+- Fixed false positive through threshold-relative checking
+- Validated with extended SMART tests
+
+**[Read the bug discovery story →](docs/02-ai-collaboration-process.md#phase-5-real-world-bug-discovery)**
+
 ### What This Demonstrates
 
 ✅ **Practical Problem-Solving** - Built to solve real operational challenges  

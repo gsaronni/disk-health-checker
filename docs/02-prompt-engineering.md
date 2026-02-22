@@ -318,6 +318,199 @@ docs/
 └── 04-smart-attributes-explained.md
 ```
 
+## Phase 7: Real-World Bug Discovery
+
+### The "Brand New Drive Warning" Incident
+
+**Context:** First production test after initial development, deployed on live infrastructure with 8 disks.
+
+**Problem Discovered:**
+```
+⚠️  /dev/sda - ST16000NM000J-2TW103 (16TB Seagate Exos)
+─────────────────────────────────────────────────────────
+Type: HDD | Power-On: 1,706h (0.2 years) | Temp: 27°C
+SMART Health: PASSED | Our Analysis: WARNING
+
+⚠️  Raw_Read_Error_Rate (VALUE=79)
+   ├─ Drive is correcting read errors (normal wear, but monitor)
+   └─ Action: Run extended SMART test monthly, verify backups
+```
+
+**Initial Reaction:** "My brand new 16TB enterprise drive is already failing?!"
+
+---
+
+### Investigation Process
+
+**Step 1: Verify Critical Indicators**
+```bash
+$ sudo smartctl -A /dev/sda | grep -E "Reallocated|Pending|Uncorrectable"
+  5 Reallocated_Sector_Ct   100  100  010  →  0  ✓
+197 Current_Pending_Sector  100  100  000  →  0  ✓
+198 Offline_Uncorrectable   100  100  000  →  0  ✓
+```
+**Result:** No actual errors. Drive appears healthy.
+
+**Step 2: Analyze Raw_Read_Error_Rate Details**
+```bash
+$ sudo smartctl -A /dev/sda | grep "Raw_Read_Error_Rate"
+  1 Raw_Read_Error_Rate  079  064  044  Pre-fail  Always  -  76598714
+```
+**Key Discovery:**
+- VALUE: 79 (current health)
+- THRESH: 44 (failure threshold)
+- **Headroom: 35 points** (well above failure)
+
+**Step 3: Research Manufacturer Specifications**
+
+Discovered Seagate-specific behavior:
+- **Consumer drives** (Barracuda): Start at VALUE=100
+- **Enterprise drives** (Exos, IronWolf Pro): Start at VALUE=80-90
+- **Reason:** Different ECC algorithms and error correction strategies
+
+**The drive model:** ST16000NM000J = Exos X16 (enterprise datacenter drive)
+- Rated for 550TB/year workload
+- 2.5M hours MTBF
+- Designed for 24/7 operation
+- More aggressive error correction = more logged (but corrected) errors
+
+---
+
+### Root Cause Analysis
+
+**Script Logic (Original):**
+```python
+# Attribute 1: Raw_Read_Error_Rate
+if attr.value <= 80:  # WARNING threshold
+    status = "WARNING"
+```
+
+**Problem:** 
+- Assumed all drives start at VALUE=100
+- Didn't account for manufacturer-specific starting points
+- Seagate Exos at VALUE=79 is actually healthy (35 points from threshold)
+
+**False positive trigger:** 79 < 80 → WARNING (incorrect)
+
+---
+
+### The Fix
+
+**Added manufacturer detection:**
+```python
+def detect_manufacturer(model: str) -> str:
+    """Detect disk manufacturer from model string"""
+    if model.startswith("ST"):
+        return "Seagate"
+    elif model.startswith("WDC"):
+        return "Western Digital"
+    # ... etc
+```
+
+**Implemented threshold-relative checking for Seagate:**
+```python
+# For Seagate drives: check headroom from threshold
+if attr_id == 1 and manufacturer == "Seagate":
+    headroom = attr.value - attr.thresh  # 79 - 44 = 35
+    
+    if headroom < 10:
+        status = "CRITICAL"  # < 10 points left
+    elif headroom < 20:
+        status = "WARNING"   # < 20 points left
+    else:
+        status = "HEALTHY"   # >= 20 points left (this drive)
+```
+
+---
+
+### Validation
+
+**Re-ran script after fix:**
+```
+✅ /dev/sda - ST16000NM000J-2TW103 (16.0 TB)
+───────────────────────────────────────────────
+Type: HDD | Power-On: 1,706h (0.2 years) | Temp: 27°C
+SMART Health: PASSED | Our Analysis: HEALTHY
+✓ All monitored attributes healthy
+```
+
+**Verified drive health:**
+```bash
+$ sudo smartctl -t long /dev/sda
+# After 23 hours (16TB extended test)
+$ sudo smartctl -l selftest /dev/sda
+
+Num  Test_Description    Status                  
+# 1  Extended offline    Completed without error
+```
+
+**Result:** Drive is perfectly healthy. False alarm eliminated.
+
+---
+
+### Impact on Development
+
+**What This Revealed:**
+
+1. **Lab testing ≠ Production reality**
+   - Initial development used consumer drives (Seagate Barracuda, WD Blue)
+   - All started at VALUE=100 (masked the issue)
+   - Enterprise drives revealed the assumption
+
+2. **Manufacturer documentation matters**
+   - Can't rely on "common knowledge" about SMART attributes
+   - Each manufacturer has quirks
+   - Must research drive-specific behavior
+
+3. **Real hardware finds edge cases**
+   - No amount of synthetic testing catches everything
+   - Production deployment is the ultimate validator
+   - User feedback is invaluable
+
+**Improvements Made:**
+
+✅ Added manufacturer detection layer  
+✅ Implemented threshold-relative checking  
+✅ Expanded attribute rules with context awareness  
+✅ Updated documentation with manufacturer quirks  
+✅ Added to testing matrix: Enterprise vs consumer drives  
+
+---
+
+### Lessons Learned
+
+**Technical:**
+- SMART attributes are manufacturer-specific
+- Absolute thresholds are insufficient
+- Always check VALUE relative to THRESH
+- Validate against multiple drive types
+
+**Process:**
+- Real-world testing is irreplaceable
+- User feedback drives improvement
+- Document quirks and edge cases
+- Iterate based on production data
+
+**AI Collaboration:**
+- AI provided initial implementation
+- Human domain knowledge caught manufacturer nuance
+- Iterative refinement solved real problem
+- Result: Production-ready code that handles edge cases
+
+---
+
+### Future Enhancements (Phase B)
+
+Based on this discovery, planned additions:
+
+- [ ] Manufacturer quirks database (Seagate, WD, Toshiba)
+- [ ] Per-manufacturer attribute interpretation
+- [ ] Warning about untested drive models
+- [ ] Community contribution guide for new quirks
+- [ ] Automated testing against drive database
+
+**This incident exemplifies why real-world validation is critical. The script went from "90% correct" to "production-ready" through actual hardware testing.**
+
 ---
 
 ## Key Lessons: What Made This Successful
