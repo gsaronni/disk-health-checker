@@ -327,8 +327,26 @@ def parse_smart_output(device: str, output: str) -> Optional[DiskInfo]:
 # HEALTH ANALYSIS
 # ============================================================================
 
+def detect_manufacturer(model: str) -> str:
+    """Detect disk manufacturer from model string"""
+    if model.startswith("ST"):
+        return "Seagate"
+    elif model.startswith("WDC") or model.startswith("WD"):
+        return "Western Digital"
+    elif model.startswith("TOSHIBA") or model.startswith("Toshiba"):
+        return "Toshiba"
+    elif "Samsung" in model:
+        return "Samsung"
+    elif "Crucial" in model or "Micron" in model:
+        return "Micron"
+    elif model.startswith("HGST") or model.startswith("Hitachi"):
+        return "HGST/Hitachi"
+    return "Unknown"
+
 def analyze_disk(disk: DiskInfo) -> None:
     """Analyze disk attributes and populate issues list"""
+    
+    manufacturer = detect_manufacturer(disk.model)
     
     for attr_id, rule in ATTRIBUTE_RULES.items():
         if attr_id not in disk.attributes:
@@ -344,25 +362,52 @@ def analyze_disk(disk: DiskInfo) -> None:
         
         # Check normalized value
         if rule.check_normalized:
-            if attr.value <= rule.normalized_threshold:
-                disk.issues.append({
-                    "severity": "CRITICAL",
-                    "attribute": attr.name,
-                    "value": f"VALUE={attr.value}",
-                    "explanation": rule.explanation_critical,
-                    "action": rule.action_critical
-                })
-                disk.overall_status = "CRITICAL"
-            elif attr.value <= rule.normalized_warning and disk.overall_status != "CRITICAL":
-                disk.issues.append({
-                    "severity": "WARNING",
-                    "attribute": attr.name,
-                    "value": f"VALUE={attr.value}",
-                    "explanation": rule.explanation_warning,
-                    "action": rule.action_warning
-                })
-                if disk.overall_status == "HEALTHY":
-                    disk.overall_status = "WARNING"
+            # Special handling for Seagate Raw_Read_Error_Rate (ID 1)
+            # Seagate enterprise drives start at 80-90, not 100
+            # Check headroom from threshold instead of absolute value
+            if attr_id == 1 and manufacturer == "Seagate":
+                headroom = attr.value - attr.thresh
+                if headroom < 10:
+                    disk.issues.append({
+                        "severity": "CRITICAL",
+                        "attribute": attr.name,
+                        "value": f"VALUE={attr.value} (headroom: {headroom} from THRESH={attr.thresh})",
+                        "explanation": "Approaching failure threshold - excessive read errors",
+                        "action": rule.action_critical
+                    })
+                    disk.overall_status = "CRITICAL"
+                elif headroom < 20:
+                    disk.issues.append({
+                        "severity": "WARNING",
+                        "attribute": attr.name,
+                        "value": f"VALUE={attr.value} (headroom: {headroom} from THRESH={attr.thresh})",
+                        "explanation": "Read error rate increasing but still acceptable for Seagate",
+                        "action": "Monitor monthly, verify backups exist"
+                    })
+                    if disk.overall_status == "HEALTHY":
+                        disk.overall_status = "WARNING"
+                # If headroom >= 20, it's healthy - don't flag it
+            else:
+                # Standard normalized value checks for other attributes
+                if attr.value <= rule.normalized_threshold:
+                    disk.issues.append({
+                        "severity": "CRITICAL",
+                        "attribute": attr.name,
+                        "value": f"VALUE={attr.value}",
+                        "explanation": rule.explanation_critical,
+                        "action": rule.action_critical
+                    })
+                    disk.overall_status = "CRITICAL"
+                elif attr.value <= rule.normalized_warning and disk.overall_status != "CRITICAL":
+                    disk.issues.append({
+                        "severity": "WARNING",
+                        "attribute": attr.name,
+                        "value": f"VALUE={attr.value}",
+                        "explanation": rule.explanation_warning,
+                        "action": rule.action_warning
+                    })
+                    if disk.overall_status == "HEALTHY":
+                        disk.overall_status = "WARNING"
         
         # Check raw value
         if rule.check_raw:
