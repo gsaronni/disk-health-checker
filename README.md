@@ -1,6 +1,3 @@
-# Quick Generic Landing Page for Disk Utilities Repo
-
-```markdown
 # Disk Monitoring Utilities
 
 > Practical CLI tools for disk health monitoring and temperature tracking in homelab environments.
@@ -115,4 +112,3 @@ Part of my homelab automation toolkit:
 ---
 
 **Built for homelab nerds who prefer terminals over dashboards.**
-```
