@@ -1,4 +1,4 @@
-i#!/bin/bash
+#!/bin/bash
 
 # Configuration
 LOGFILE="temperature_log.csv"
