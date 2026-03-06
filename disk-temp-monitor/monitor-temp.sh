@@ -9,7 +9,20 @@ BACKUP_DIR="temp_logs_backup"
 MAX_FILE_SIZE=50000000  # 50MB in bytes
 INTERVAL=10             # Log every 10 seconds
 
-# Disk configuration - CUSTOMIZE THESE FOR YOUR SYSTEM
+# Read disks from config file
+# declare -A DISKS
+# while IFS=',' read -r device name pattern; do
+#     [[ "$device" =~ ^#.*$ ]] && continue  # Skip comments
+#     DISKS["$device"]="$name|$pattern"
+# done < disks.conf
+#
+# # Build CSV header dynamically
+# HEADER="Timestamp"
+# for device in "${!DISKS[@]}"; do
+#     IFS='|' read -r name pattern <<< "${DISKS[$device]}"
+#     HEADER="${HEADER},${name}_Temperature"
+# done
+#
 # Format: DISK_<n>_DEV and DISK_<n>_PATTERN
 DISK_1_DEV="/dev/sdf"
 DISK_1_NAME="Avicenna"
