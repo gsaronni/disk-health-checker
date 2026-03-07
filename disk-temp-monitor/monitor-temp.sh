@@ -8,29 +8,50 @@ LOGFILE="temperature_log.csv"
 BACKUP_DIR="temp_logs_backup"
 MAX_FILE_SIZE=50000000  # 50MB in bytes
 INTERVAL=10             # Log every 10 seconds
+CONFIG_FILE="disks.conf"
 
-# Read disks from config file
-# declare -A DISKS
-# while IFS=',' read -r device name pattern; do
-#     [[ "$device" =~ ^#.*$ ]] && continue  # Skip comments
-#     DISKS["$device"]="$name|$pattern"
-# done < disks.conf
-#
-# # Build CSV header dynamically
-# HEADER="Timestamp"
-# for device in "${!DISKS[@]}"; do
-#     IFS='|' read -r name pattern <<< "${DISKS[$device]}"
-#     HEADER="${HEADER},${name}_Temperature"
-# done
-#
-# Format: DISK_<n>_DEV and DISK_<n>_PATTERN
-DISK_1_DEV="/dev/sdf"
-DISK_1_NAME="Avicenna"
-DISK_1_PATTERN="Temperature"
+# Check if config file exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: $CONFIG_FILE not found!"
+    echo "Create it with format: device_path,friendly_name,grep_pattern"
+    echo "Example:"
+    echo "  /dev/sda,SystemDrive,Temperature_Celsius"
+    echo "  /dev/sdb,BackupDrive,Temp"
+    exit 1
+fi
 
-DISK_2_DEV="/dev/sdh"
-DISK_2_NAME="Zimrilim"
-DISK_2_PATTERN="Temp"
+# Read disks from config file into arrays
+declare -a DEVICES
+declare -a NAMES
+declare -a PATTERNS
+
+while IFS=',' read -r device name pattern; do
+    # Skip comments and empty lines
+    [[ "$device" =~ ^#.*$ ]] && continue
+    [[ -z "$device" ]] && continue
+    
+    # Trim whitespace
+    device=$(echo "$device" | xargs)
+    name=$(echo "$name" | xargs)
+    pattern=$(echo "$pattern" | xargs)
+    
+    DEVICES+=("$device")
+    NAMES+=("$name")
+    PATTERNS+=("$pattern")
+done < "$CONFIG_FILE"
+
+# Check if we found any disks
+if [ ${#DEVICES[@]} -eq 0 ]; then
+    echo "Error: No disks found in $CONFIG_FILE"
+    echo "Make sure file has format: device_path,friendly_name,grep_pattern"
+    exit 1
+fi
+
+echo "Found ${#DEVICES[@]} disk(s) to monitor:"
+for i in "${!DEVICES[@]}"; do
+    echo "  - ${NAMES[$i]} (${DEVICES[$i]})"
+done
+echo ""
 
 # Create backup directory
 mkdir -p "$BACKUP_DIR"
@@ -69,9 +90,15 @@ cleanup() {
 # Trap Ctrl+C for clean exit
 trap cleanup INT
 
+# Build CSV header dynamically
+HEADER="Timestamp"
+for name in "${NAMES[@]}"; do
+    HEADER="${HEADER},${name}_Temperature"
+done
+
 # Create header only if file doesn't exist
 if [ ! -f "$LOGFILE" ]; then
-    echo "Timestamp,${DISK_1_NAME}_Temperature,${DISK_2_NAME}_Temperature" > "$LOGFILE"
+    echo "$HEADER" > "$LOGFILE"
     echo "Starting new temperature log..."
 else
     echo "Resuming temperature logging..."
@@ -87,15 +114,38 @@ while true; do
     rotate_log
     
     TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-    DISK_1_TEMP=$(get_temp "$DISK_1_DEV" "$DISK_1_PATTERN")
-    DISK_2_TEMP=$(get_temp "$DISK_2_DEV" "$DISK_2_PATTERN")
     
-    # Only log if we got at least one valid temperature
-    if [ "$DISK_1_TEMP" != "N/A" ] || [ "$DISK_2_TEMP" != "N/A" ]; then
-        echo "$TIMESTAMP,$DISK_1_TEMP,$DISK_2_TEMP" >> "$LOGFILE"
-        echo "$(date +%H:%M:%S) - ${DISK_1_NAME}: ${DISK_1_TEMP}°C, ${DISK_2_NAME}: ${DISK_2_TEMP}°C"
+    # Collect temperatures for all disks
+    TEMPS=()
+    DISPLAY_PARTS=()
+    
+    for i in "${!DEVICES[@]}"; do
+        temp=$(get_temp "${DEVICES[$i]}" "${PATTERNS[$i]}")
+        TEMPS+=("$temp")
+        DISPLAY_PARTS+=("${NAMES[$i]}: ${temp}°C")
+    done
+    
+    # Build CSV line
+    CSV_LINE="$TIMESTAMP"
+    for temp in "${TEMPS[@]}"; do
+        CSV_LINE="${CSV_LINE},${temp}"
+    done
+    
+    # Check if we got at least one valid temperature
+    VALID_TEMP=false
+    for temp in "${TEMPS[@]}"; do
+        if [ "$temp" != "N/A" ]; then
+            VALID_TEMP=true
+            break
+        fi
+    done
+    
+    # Log and display
+    if [ "$VALID_TEMP" = true ]; then
+        echo "$CSV_LINE" >> "$LOGFILE"
+        echo "$(date +%H:%M:%S) - ${DISPLAY_PARTS[*]}"
     else
-        echo "$(date +%H:%M:%S) - Warning: Could not read temperatures"
+        echo "$(date +%H:%M:%S) - Warning: Could not read any temperatures"
     fi
     
     sleep "$INTERVAL"
