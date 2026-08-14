@@ -1,0 +1,5 @@
+temperature_log.csv
+temp_logs_backup/
+etc/disks.conf
+__pycache__/
+*.pyc
