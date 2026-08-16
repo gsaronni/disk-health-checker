@@ -530,48 +530,43 @@ Action Required:
 
 ---
 
-## Future: Phase B Design Decisions
+## Phase B Status (v1.1.0 update)
 
-### JSON Export Format
+### JSON Export Format — ✅ Shipped
 
-**Decision (planned):**
+Implemented as `--json` (stdout) and `--json-out FILE`, bypassing rendering entirely rather than adding a `--format` flag to the normal report path. Output shape matches the original plan closely:
 ```json
 {
-  "timestamp": "2026-02-10T14:30:00Z",
-  "hostname": "zimablade",
+  "timestamp": "2026-08-14T13:48:16",
+  "hostname": "zblade",
   "disks": [
     {
       "device": "/dev/sda",
-      "status": "CRITICAL",
+      "model": "...",
+      "overall_status": "CRITICAL",
       "issues": [...]
     }
   ]
 }
 ```
 
-### Historical Storage
+**Scope decision:** this is a single snapshot, not a history mechanism. No automatic file management, no retention policy — that's the deferred piece below. The intent is occasional spot-checks you can `jq` or diff by hand, not a background monitoring pipeline. Building the pipeline (Prometheus + Grafana, reusing infra already running on zblade) is a separate, later decision, not bundled into this tool.
 
-**Decision (planned):** JSON files in `~/.disk-health/`
-```
-~/.disk-health/
-├── 2026-02-10-143000.json
-├── 2026-02-17-090000.json
-└── latest.json (symlink)
-```
+### Historical Storage — deferred, not abandoned
 
-**Retention:** Last 30 runs or 90 days
+`~/.disk-health/*.json` with retention is still a reasonable Phase C idea, but explicitly not built now. `--json-out` gives you the building block (a timestamped file) without committing to a storage/retention scheme before there's a real need for one.
 
-### Diff Mode
+### Diff Mode — deferred
 
-**Decision (planned):**
-```bash
-$ ./disk-health-checker.py --diff ~/.disk-health/2026-02-03.json
+Same reasoning — trivial to add once there's an actual archive of JSON snapshots to diff against, premature before that exists.
 
-Changes since 2026-02-03:
-  /dev/sda:
-    - Load_Cycle_Count: VALUE 5 → 1 (⚠️  declining)
-    - Seek_Error_Rate: VALUE 90 → 84 (⚠️  declining)
-```
+### NVMe Support — ✅ Shipped
+
+Originally NVMe disks fell through the SATA-table parser silently (empty `attributes` dict, always reported healthy — a real gap on any NVMe-primary host). `lib/smart_parser.py` now dispatches by device path to a dedicated NVMe parser reading the named `SMART/Health Information` fields (Critical Warning, Available Spare, Percentage Used, Media/Data Integrity Errors) instead of the numbered attribute table, with its own rule set in `analyze_nvme_disk()`.
+
+### `rich` Dependency — softened
+
+The original "worth it" verdict on `rich` (see above) still holds for the primary use case — but it's now an optional import with a plain-text fallback that reproduces the same structure (headers, per-issue blocks, summary table) without color. This matters specifically for running the checker on infrastructure you don't control the Python environment on, where you can't guarantee `pip install rich` succeeds.
 
 ---
 
